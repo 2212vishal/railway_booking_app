@@ -2,11 +2,9 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./user');
 const Train = require('./train');
-const Seat = require('./seat');
-const Station = require('./station');
 
 const Booking = sequelize.define('Booking', {
-    booking_id: {
+    id: {
         type: DataTypes.INTEGER,
         autoIncrement: true,
         primaryKey: true,
@@ -14,37 +12,36 @@ const Booking = sequelize.define('Booking', {
     user_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
+        references: {
+            model: User, // This links to the User model
+            key: 'user_id',
+        },
+        onDelete: 'CASCADE',
     },
     train_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
+        references: {
+            model: Train, // This links to the Train model
+            key: 'train_id',
+        },
+        onDelete: 'CASCADE',
     },
-    seat_id: {
+    seatsBooked: {
         type: DataTypes.INTEGER,
         allowNull: false,
+        defaultValue: 1, // Default to 1 seat booked unless specified
     },
-    source_station_id: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-    },
-    destination_station_id: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-    },
-    booking_date: {
+    bookingDate: {
         type: DataTypes.DATE,
-        allowNull: false,
+        defaultValue: DataTypes.NOW, // Automatically set booking date to the current timestamp
     },
-    status: {
-        type: DataTypes.ENUM('confirmed', 'cancelled'),
-        defaultValue: 'confirmed',
-    },
+}, {
+    tableName: 'bookings', // Name of the table in MySQL
+    timestamps: false, // Disables the createdAt and updatedAt timestamps
 });
 
 Booking.belongsTo(User, { foreignKey: 'user_id' });
 Booking.belongsTo(Train, { foreignKey: 'train_id' });
-Booking.belongsTo(Seat, { foreignKey: 'seat_id' });
-Booking.belongsTo(Station, { as: 'sourceStation', foreignKey: 'source_station_id' });
-Booking.belongsTo(Station, { as: 'destinationStation', foreignKey: 'destination_station_id' });
 
 module.exports = Booking;

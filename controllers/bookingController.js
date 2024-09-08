@@ -1,67 +1,48 @@
 const Booking = require('../models/booking');
 const Seat = require('../models/seat');
 const Train = require('../models/train');
-const Station = require('../models/station');
 const { Sequelize, Op } = require('sequelize');
 const sequelize = require('../config/database');
 
 exports.bookSeat = async (req, res) => {
-    const { user_id, train_id, seat_id, source_station_id, destination_station_id, booking_date } = req.body;
+    // console.log(req.body);
+    const { userId, trainId, seatsBooked } = req.body;
 
     // Start the transaction
     const t = await sequelize.transaction();
 
     try {
         // Lock the seat row for update to prevent race conditions
-        const seat = await Seat.findOne({
-            where: { seat_id, train_id },
-            lock: t.LOCK.UPDATE,  // Lock the seat for the transaction
+        const train = await Train.findOne({
+            where: { train_id: trainId },
+            lock: t.LOCK.UPDATE,  // Lock the train to prevent concurrent seat bookings
             transaction: t
         });
-
-        if (!seat) {
+        // console.log(train);
+        if (!train) {
             await t.rollback();
-            return res.status(404).json({ message: 'Seat not found' });
+            return res.status(404).json({ message: 'Train not found' });
         }
 
-        // Check for conflicting bookings where segments overlap
-        const conflictingBookings = await Booking.findAll({
-            where: {
-                train_id,
-                seat_id,
-                [Op.or]: [
-                    {
-                        source_station_id: { [Op.lte]: source_station_id },
-                        destination_station_id: { [Op.gt]: source_station_id }
-                    },
-                    {
-                        source_station_id: { [Op.lt]: destination_station_id },
-                        destination_station_id: { [Op.gte]: destination_station_id }
-                    },
-                    {
-                        source_station_id: { [Op.gte]: source_station_id },
-                        destination_station_id: { [Op.lte]: destination_station_id }
-                    }
-                ]
-            },
-            transaction: t
-        });
-
-        // If there are conflicting bookings, prevent this booking
-        if (conflictingBookings.length > 0) {
+        // Check if enough seats are available
+        if (train.total_seats < seatsBooked) {
             await t.rollback();
-            return res.status(409).json({ message: 'Seat is not available for the requested segment.' });
+            return res.status(409).json({ message: 'Not enough seats available' });
         }
+
+        // Reduce available seats
+        train.total_seats -= seatsBooked;
+        console.log(train.total_seats);
+        await train.save({ transaction: t });
 
         // Create the booking
         const booking = await Booking.create({
-            user_id,
-            train_id,
-            seat_id,
-            source_station_id,
-            destination_station_id,
-            booking_date
+            user_id:userId,
+            train_id:trainId,
+            seatsBooked:seatsBooked,
+            bookingDate: new Date(),
         }, { transaction: t });
+        
 
         // Commit the transaction if everything is successful
         await t.commit();
@@ -74,92 +55,72 @@ exports.bookSeat = async (req, res) => {
 };
 
 exports.checkAvailability = async (req, res) => {
-    const { source_station_id, destination_station_id } = req.query;
-
+    console.log(req.query);
+    const { train_id } = req.query;
+    
     try {
-        // Refined query to find available seats that are not booked for the specified route
-        const availableSeats = await sequelize.query(
-            `
-            SELECT 
-                s.seat_id,
-                s.seat_number,
-                t.train_id,
-                t.train_name,
-                t.train_number
-            FROM 
-                Seats s
-            INNER JOIN 
-                Trains t ON s.train_id = t.train_id
-            LEFT JOIN 
-                Bookings b ON s.seat_id = b.seat_id 
-                AND (
-                    (b.source_station_id <= :source_station_id AND b.destination_station_id > :source_station_id)
-                    OR
-                    (b.source_station_id < :destination_station_id AND b.destination_station_id >= :destination_station_id)
-                )
-            WHERE 
-                b.booking_id IS NULL  -- Ensuring there are no bookings that overlap with the requested route segment
-            AND 
-                s.source_station_id <= :source_station_id 
-            AND 
-                s.destination_station_id >= :destination_station_id
-            `,
-            {
-                replacements: {
-                    source_station_id,
-                    destination_station_id,
-                },
-                type: Sequelize.QueryTypes.SELECT
-            }
-        );
+        // Check train seat availability
+        const train = await Train.findOne({
+            where: { train_id: train_id },
+            attributes: ['train_name', 'train_number', 'total_seats']
+        });
 
-        if (availableSeats.length === 0) {
-            return res.status(404).json({ message: 'No available seats for this route segment.' });
+        if (!train) {
+            return res.status(404).json({ message: 'Train not found' });
         }
 
-        res.json(availableSeats);
+        res.json({ availableSeats: train.total_seats, train });
     } catch (error) {
         res.status(500).json({ message: 'Error fetching availability', error: error.message });
     }
 };
 
-
-
 exports.getBookingDetails = async (req, res) => {
-    const { booking_id } = req.params;
-
+    const { userId } = req.query; // Get userId from query parameters
+    
     try {
-        // Fetch booking details with associated train, seat, and station information
-        const booking = await Booking.findOne({
-            where: { booking_id },
+        // Fetch booking details for the specified user
+        const bookings = await Booking.findAll({
+            where: { user_id: userId }, // Fetch all bookings for the user
             include: [
                 {
                     model: Train,
                     attributes: ['train_name', 'train_number']
-                },
-                {
-                    model: Seat,
-                    attributes: ['seat_number']
-                },
-                {
-                    model: Station,
-                    as: 'sourceStation',
-                    attributes: ['station_name', 'station_code']
-                },
-                {
-                    model: Station,
-                    as: 'destinationStation',
-                    attributes: ['station_name', 'station_code']
                 }
             ]
         });
 
-        if (!booking) {
-            return res.status(404).json({ message: 'Booking not found' });
+        if (bookings.length === 0) {
+            return res.status(404).json({ message: 'No bookings found for the specified user' });
         }
 
-        res.json(booking);
+        res.json({
+            bookings,
+            confirmed: bookings.length > 0 // Indicate that bookings are available
+        });
     } catch (error) {
         res.status(500).json({ message: 'Error fetching booking details', error: error.message });
+    }
+};
+
+exports.getAllBookings = async (req, res) => {
+
+    try {
+        const bookings = await Booking.findAll({
+            include: [
+                {
+                    model: Train,
+                    attributes: ['train_name', 'train_number']
+                }
+            ]
+        });
+
+        if (bookings.length === 0) {
+            return res.status(404).json({ message: 'No bookings found' });
+        }
+
+        res.json(bookings);
+    } catch (error) {
+        res.status(500).json({ message: 'Error fetching bookings', error: error.message });
     }
 };

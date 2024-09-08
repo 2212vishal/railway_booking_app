@@ -1,5 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const User = require('./user');
+const Train = require('./train');
+const Seat = require('./seat');
+const Station = require('./station');
 
 const Booking = sequelize.define('Booking', {
     booking_id: {
@@ -31,10 +35,16 @@ const Booking = sequelize.define('Booking', {
         type: DataTypes.DATE,
         allowNull: false,
     },
-    created_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
+    status: {
+        type: DataTypes.ENUM('confirmed', 'cancelled'),
+        defaultValue: 'confirmed',
     },
 });
+
+Booking.belongsTo(User, { foreignKey: 'user_id' });
+Booking.belongsTo(Train, { foreignKey: 'train_id' });
+Booking.belongsTo(Seat, { foreignKey: 'seat_id' });
+Booking.belongsTo(Station, { as: 'sourceStation', foreignKey: 'source_station_id' });
+Booking.belongsTo(Station, { as: 'destinationStation', foreignKey: 'destination_station_id' });
 
 module.exports = Booking;
